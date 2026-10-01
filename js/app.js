@@ -161,6 +161,56 @@ function msg(id, text, cls) {
   el.className = 'msg ' + (cls || '');
 }
 
+// ---------- 24/7 paper bots (published by the supervisor, real recorded paper trades) ----------
+let botBoardCache = null;
+async function renderBotBoard() {
+  const el = $('bot-board');
+  try {
+    const res = await fetch('trader-logs/leaderboard.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('no bot data yet');
+    const data = await res.json();
+    botBoardCache = data;
+  } catch (e) {
+    el.innerHTML = '<p class="muted">Bots are warming up — their first leaderboard publishes soon.</p>';
+    return;
+  }
+  const rows = botBoardCache.rows || [];
+  if (!rows.length) { el.innerHTML = '<p class="muted">Bots are warming up.</p>'; return; }
+  const upd = botBoardCache.updatedAt ? fmtT(botBoardCache.updatedAt) : '';
+  el.innerHTML = `<p class="muted small">updated ${upd} · paper only</p>`;
+  rows.forEach((row, i) => {
+    const div = document.createElement('div');
+    div.className = 'lb-row';
+    const wr = row.winRate == null ? '—' : Math.round(row.winRate * 100) + '%';
+    div.innerHTML = `<span class="lb-rank">#${i + 1}</span>
+      <span class="lb-name"><b>🤖 ${String(row.name).replace(/[<>&]/g, '')}</b>
+      <small>${row.trades} trades · win ${wr}${row.lastTradeAt ? ' · last ' + fmtT(row.lastTradeAt) : ''}${row.killedToday ? ' · ⛔ day stop hit' : ''}</small></span>
+      <span class="${row.totalPnl >= 0 ? 'pos' : 'neg'}"><b>${row.totalPnl >= 0 ? '+' : ''}${fmt$(row.totalPnl)}</b></span>`;
+    div.onclick = () => showBotDetail(row);
+    el.appendChild(div);
+  });
+}
+
+function showBotDetail(row) {
+  const card = $('trader-detail-card');
+  card.classList.remove('hidden');
+  $('detail-name').textContent = '🤖 ' + row.name + ' — every trade (paper)';
+  const el = $('trader-detail');
+  const trades = (botBoardCache.recentTrades || []).filter(t => t.trader === row.name).slice(0, 50);
+  el.innerHTML = trades.length ? '' : '<p class="muted">No trades recorded yet.</p>';
+  for (const tr of trades) {
+    const div = document.createElement('div');
+    div.className = 'trade-row';
+    const pnlTxt = tr.realizedPnl != null
+      ? `<span class="${tr.realizedPnl >= 0 ? 'pos' : 'neg'}">${tr.realizedPnl >= 0 ? '+' : ''}${fmt$(tr.realizedPnl)}</span>` : '';
+    div.innerHTML = `<span><b class="${tr.side === 'buy' ? 'pos' : 'neg'}">${tr.side.toUpperCase()}</b> ${Number(tr.qty).toFixed(6)} ${tr.symbol} @ ${fmt$(tr.price)}
+      <br><small class="muted">${fmtT(tr.at)}</small></span>
+      <span style="text-align:right">${pnlTxt}<br><small class="muted">fee ${fmt$(tr.fee)}</small></span>`;
+    el.appendChild(div);
+  }
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 // ---------- leaderboard ----------
 function renderBoard() {
   const lb = leaderboard(state, priceOf);
@@ -342,7 +392,7 @@ function init() {
     activeTraderId = t.id;
     save(); renderAll();
   };
-  $('btn-refresh-board').onclick = () => { renderBoard(); renderCopy(); };
+  $('btn-refresh-board').onclick = () => { renderBoard(); renderCopy(); renderBotBoard(); };
   $('btn-export').onclick = doExport;
   $('btn-import').onclick = doImport;
   $('btn-do-import').onclick = () => {
@@ -379,6 +429,7 @@ function renderAll() {
   renderTickers();
   updateTradePrice();
   renderBoard();
+  renderBotBoard();
   renderCopy();
   renderWallet();
 }

@@ -1,0 +1,4 @@
+trader-logs/state.json
+trader-logs/trades.log
+trader-logs/cron.log
+trader-logs/run.lock

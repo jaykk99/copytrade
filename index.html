@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0a0e14">
+<title>CopyTrade — Paper Trading</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="logo">📈 CopyTrade <span class="paper-badge">PAPER</span></div>
+    <div id="price-status" class="price-status"><span class="dot"></span><span id="price-status-text">connecting…</span></div>
+  </header>
+
+  <div class="safety-banner">🧪 Paper trading only — simulated $10,000. No real money. <span id="live-badge" class="live-off">LIVE TRADING: DISABLED</span></div>
+
+  <nav class="tabs">
+    <button data-tab="trade" class="active">Trade</button>
+    <button data-tab="board">🏆 Board</button>
+    <button data-tab="copy">🔁 Copy</button>
+    <button data-tab="wallet">👛 Wallet</button>
+  </nav>
+
+  <main>
+    <!-- TRADE -->
+    <section id="tab-trade" class="tab active">
+      <div class="card">
+        <div class="row between">
+          <h2 id="trader-name">—</h2>
+          <button id="btn-switch-trader" class="ghost">switch</button>
+        </div>
+        <div class="stats">
+          <div><label>Portfolio</label><b id="stat-portfolio">$—</b></div>
+          <div><label>Cash</label><b id="stat-cash">$—</b></div>
+          <div><label>Total P&amp;L</label><b id="stat-pnl">$—</b></div>
+          <div><label>Win rate</label><b id="stat-win">—</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Paper trade</h3>
+        <div class="ticker-row" id="ticker-row"></div>
+        <div class="form-grid">
+          <select id="trade-symbol"></select>
+          <div class="seg">
+            <button id="side-buy" class="buy active">BUY</button>
+            <button id="side-sell" class="sell">SELL</button>
+          </div>
+          <input id="trade-qty" type="number" inputmode="decimal" min="0" step="any" placeholder="Quantity">
+          <div class="row between"><span class="muted" id="trade-price-label">price: —</span><button id="btn-max" class="ghost">max</button></div>
+          <button id="btn-trade" class="primary">Place paper trade</button>
+        </div>
+        <div id="trade-msg" class="msg"></div>
+      </div>
+
+      <div class="card">
+        <h3>Positions</h3>
+        <div id="positions"><p class="muted">No open positions.</p></div>
+      </div>
+
+      <div class="card">
+        <h3>My trades</h3>
+        <div id="my-trades"><p class="muted">No trades yet.</p></div>
+      </div>
+    </section>
+
+    <!-- LEADERBOARD -->
+    <section id="tab-board" class="tab">
+      <div class="card">
+        <div class="row between">
+          <h3>🏆 Live leaderboard</h3>
+          <button id="btn-refresh-board" class="ghost">↻</button>
+        </div>
+        <p class="muted small">Ranked by total P&amp;L. Every row links to real recorded paper trades — nothing is seeded or faked.</p>
+        <div id="leaderboard"><p class="muted">No traders yet — make your first paper trade.</p></div>
+      </div>
+      <div class="card">
+        <h3>Share / import trader</h3>
+        <div class="row">
+          <button id="btn-export" class="ghost">📤 my share code</button>
+          <button id="btn-import" class="ghost">📥 import code</button>
+        </div>
+        <textarea id="share-box" class="hidden" rows="4" placeholder="Paste a trader share code here, then tap Import"></textarea>
+        <button id="btn-do-import" class="ghost hidden">Import</button>
+        <div id="share-msg" class="msg"></div>
+      </div>
+      <div class="card hidden" id="trader-detail-card">
+        <h3 id="detail-name">Trader</h3>
+        <div id="trader-detail"></div>
+      </div>
+    </section>
+
+    <!-- COPY -->
+    <section id="tab-copy" class="tab">
+      <div class="card">
+        <h3>🔁 Copy trading <span class="paper-badge">PAPER</span></h3>
+        <p class="muted small">Follow a top trader — your paper account mirrors their paper trades automatically, at a fraction you choose. Simulated only.</p>
+        <div id="copy-list"><p class="muted">No traders to follow yet.</p></div>
+      </div>
+      <div class="card">
+        <h3>I'm following</h3>
+        <div id="following-list"><p class="muted">Not following anyone.</p></div>
+      </div>
+      <div class="card">
+        <h3>Copy feed</h3>
+        <div id="copy-feed"><p class="muted">Copied trades will appear here.</p></div>
+      </div>
+    </section>
+
+    <!-- WALLET -->
+    <section id="tab-wallet" class="tab">
+      <div class="card">
+        <h3>👛 Trust Wallet <span class="paper-badge">READ-ONLY</span></h3>
+        <p class="muted small">Link your <b>public</b> wallet address to view balances. This app never asks for seed phrases, private keys, or signatures — anyone who does is scamming you.</p>
+        <div id="wallet-connected" class="hidden">
+          <div class="row between">
+            <b id="wallet-addr"></b>
+            <button id="btn-disconnect" class="ghost">disconnect</button>
+          </div>
+          <div id="wallet-balances"></div>
+        </div>
+        <div id="wallet-connect-form">
+          <button id="btn-connect-wallet" class="primary">Connect Trust Wallet</button>
+        </div>
+        <div id="wallet-msg" class="msg"></div>
+      </div>
+      <div class="card">
+        <h3>Live trading status</h3>
+        <p><span class="live-off">DISABLED</span></p>
+        <p class="muted small">Real-money execution requires Jay's explicit approval, a code change, and a security review. This build cannot move real funds — the live-trading module throws on any call.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- wallet modal -->
+  <div id="wallet-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="row between"><h3>Connect wallet</h3><button id="modal-close" class="ghost">✕</button></div>
+      <p class="muted small">In Trust Wallet: tap <b>Settings → Wallets</b>, copy your <b>public receive address</b>, paste it below. Read-only — no signing, no keys.</p>
+      <input id="wallet-input" placeholder="Paste public address (0x…, bc1…, …)" autocomplete="off">
+      <button id="btn-link-wallet" class="primary">Link (read-only)</button>
+      <div id="modal-msg" class="msg"></div>
+    </div>
+  </div>
+
+  <footer class="muted small">Paper trading simulator · prices: CoinGecko/CoinCap · not financial advice</footer>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

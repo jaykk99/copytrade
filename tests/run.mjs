@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import {
   newState, createTrader, placePaperTrade, leaderboard, tradeHistory,
-  exportTrader, importTrader, portfolioValue,
+  exportTrader, importTrader, portfolioValue, winRate,
 } from '../js/engine.js';
 import { followTrader, unfollowTrader, mirrorTrade } from '../js/copy.js';
 import { createPriceFeed } from '../js/prices.js';
@@ -43,9 +43,15 @@ console.log('engine');
     assert.ok(!r.ok && /insufficient/.test(r.error));
   });
 
-  t('rejects sell of nothing held', () => {
-    const r = placePaperTrade(s, a.id, { symbol: 'ETH', side: 'sell', qty: 1, price: 3000 });
-    assert.ok(!r.ok && /insufficient position/.test(r.error));
+  t('sell with no position opens a short (paper margin)', () => {
+    const r = placePaperTrade(s, a.id, { symbol: 'ETH', side: 'sell', qty: 1, price: 3000, equity: 20000 });
+    assert.ok(r.ok, r.error);
+    assert.equal(a.positions.ETH.qty, -1);
+    // cover it right away so later assertions stay clean; cover fee = 3
+    const c = placePaperTrade(s, a.id, { symbol: 'ETH', side: 'buy', qty: 1, price: 3000 });
+    assert.ok(c.ok, c.error);
+    assert.ok(!a.positions.ETH);
+    assert.ok(Math.abs(c.trade.realizedPnl - -3) < 1e-9, 'got ' + c.trade.realizedPnl);
   });
 
   t('sell books correct realized pnl', () => {
@@ -58,9 +64,10 @@ console.log('engine');
   });
 
   t('portfolio value and total pnl', () => {
-    // cash = 10000 - 6006 (buy+fee) + 6593.4 (sell-fee) = 10587.4 ; no positions
+    // cash = 10000 - 6006 (buy+fee) + 2997 (short open) - 3003 (cover+fee)
+    //        + 6593.4 (sell-fee) = 10581.4 ; no positions
     const v = portfolioValue(a, priceOf);
-    assert.ok(Math.abs(v - 10587.4) < 1e-9, 'got ' + v);
+    assert.ok(Math.abs(v - 10581.4) < 1e-9, 'got ' + v);
   });
 
   t('rejects bad symbol / bad qty', () => {
@@ -200,6 +207,61 @@ console.log('safety');
     assert.equal(detectChain('bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4'), 'bitcoin');
     assert.equal(detectChain('not an address'), null);
     assert.equal(shortAddress('0x742d35Cc6634C0532925a3b844Bc454e4438f44e'), '0x742d…f44e');
+  });
+}
+
+console.log('shorts');
+{
+  const s = newState();
+  const a = createTrader(s, 'Shorty');
+  const eq0 = portfolioValue(a, { BTC: 100 });
+
+  t('short open credits cash, negative qty', () => {
+    const r = placePaperTrade(s, a.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 100, equity: eq0 });
+    assert.ok(r.ok, r.error);
+    assert.equal(a.positions.BTC.qty, -0.1);
+    assert.equal(a.positions.BTC.avgEntry, 100);
+    assert.ok(Math.abs(a.cash - (10000 + 10 - 0.01)) < 1e-9);
+  });
+
+  t('partial cover books profit', () => {
+    const r = placePaperTrade(s, a.id, { symbol: 'BTC', side: 'buy', qty: 0.05, price: 90 });
+    assert.ok(r.ok, r.error);
+    const exp = 0.05 * (100 - 90) - 0.05 * 90 * 0.001;
+    assert.ok(Math.abs(r.trade.realizedPnl - exp) < 1e-9);
+    assert.equal(a.positions.BTC.qty, -0.05);
+  });
+
+  t('full cover at loss, winRate counts covers', () => {
+    const r = placePaperTrade(s, a.id, { symbol: 'BTC', side: 'buy', qty: 0.05, price: 110 });
+    assert.ok(r.ok, r.error);
+    assert.ok(!a.positions.BTC);
+    assert.ok(r.trade.realizedPnl < 0);
+    assert.equal(winRate(a), 0.5); // 1 win (cover), 1 loss (cover)
+  });
+
+  t('over-cover rejected', () => {
+    const s2 = newState();
+    const b = createTrader(s2, 'S2');
+    placePaperTrade(s2, b.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 100, equity: 10000 });
+    const r = placePaperTrade(s2, b.id, { symbol: 'BTC', side: 'buy', qty: 0.2, price: 100 });
+    assert.equal(r.ok, false);
+  });
+
+  t('short beyond equity rejected (no leverage)', () => {
+    const s3 = newState();
+    const c = createTrader(s3, 'S3');
+    const r = placePaperTrade(s3, c.id, { symbol: 'BTC', side: 'sell', qty: 5, price: 100, equity: 100 });
+    assert.equal(r.ok, false);
+  });
+
+  t('short unrealized sign correct', () => {
+    const s4 = newState();
+    const d = createTrader(s4, 'S4');
+    placePaperTrade(s4, d.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 100, equity: 10000 });
+    const pos = d.positions.BTC;
+    assert.ok(pos.qty * (110 - pos.avgEntry) < 0); // price up -> loss
+    assert.ok(pos.qty * (90 - pos.avgEntry) > 0);  // price down -> profit
   });
 }
 

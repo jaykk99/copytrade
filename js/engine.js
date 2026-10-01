@@ -47,13 +47,16 @@ export function totalPnl(trader, priceOf) {
 }
 
 export function winRate(trader) {
-  const closed = trader.trades.filter(t => t.side === 'sell' && typeof t.realizedPnl === 'number');
+  // Any closing trade (long sell OR short cover) with a realized P&L counts.
+  const closed = trader.trades.filter(t => typeof t.realizedPnl === 'number');
   if (closed.length === 0) return null;
   const wins = closed.filter(t => t.realizedPnl > 0).length;
   return wins / closed.length;
 }
 
-// opts: { symbol, side: 'buy'|'sell', qty, price, at? }
+// opts: { symbol, side: 'buy'|'sell', qty, price, at?, equity? }
+// Long AND short paper positions. Shorts are cash-credited on open and
+// cash-debited on cover; paper margin rule: short notional <= equity (no leverage).
 // Returns { ok, trade?, error? }
 export function placePaperTrade(state, traderId, opts) {
   const trader = getTrader(state, traderId);
@@ -67,28 +70,55 @@ export function placePaperTrade(state, traderId, opts) {
   const price = Number(opts.price);
   if (!Number.isFinite(price) || price <= 0) return { ok: false, error: 'invalid price' };
   const at = Number(opts.at) > 0 ? Number(opts.at) : Date.now();
+  const equity = Number(opts.equity);
 
   const notional = qty * price;
   const fee = notional * CONFIG.PAPER_FEE_RATE;
   let realizedPnl = null;
+  const pos = trader.positions[symbol];
 
   if (side === 'buy') {
-    const cost = notional + fee;
-    if (cost > trader.cash + 1e-9) return { ok: false, error: 'insufficient paper cash' };
-    trader.cash -= cost;
-    const pos = trader.positions[symbol] || { qty: 0, avgEntry: 0 };
-    const newQty = pos.qty + qty;
-    pos.avgEntry = (pos.qty * pos.avgEntry + qty * price) / newQty;
-    pos.qty = newQty;
-    trader.positions[symbol] = pos;
+    if (pos && pos.qty < -1e-12) {
+      // cover a short (full or partial; never flip in one trade)
+      const shortQty = -pos.qty;
+      if (qty > shortQty + 1e-12) return { ok: false, error: 'cover qty exceeds short; close first' };
+      const cost = notional + fee;
+      if (cost > trader.cash + 1e-9) return { ok: false, error: 'insufficient paper cash to cover' };
+      realizedPnl = qty * (pos.avgEntry - price) - fee;
+      trader.cash -= cost;
+      trader.realizedPnl += realizedPnl;
+      pos.qty += qty;
+      if (Math.abs(pos.qty) <= 1e-12) delete trader.positions[symbol];
+    } else {
+      // open/add long
+      const cost = notional + fee;
+      if (cost > trader.cash + 1e-9) return { ok: false, error: 'insufficient paper cash' };
+      trader.cash -= cost;
+      const p = pos || { qty: 0, avgEntry: 0 };
+      const newQty = p.qty + qty;
+      p.avgEntry = (p.qty * p.avgEntry + qty * price) / newQty;
+      p.qty = newQty;
+      trader.positions[symbol] = p;
+    }
   } else {
-    const pos = trader.positions[symbol];
-    if (!pos || pos.qty < qty - 1e-12) return { ok: false, error: 'insufficient position' };
-    realizedPnl = qty * (price - pos.avgEntry) - fee;
-    trader.cash += notional - fee;
-    trader.realizedPnl += realizedPnl;
-    pos.qty -= qty;
-    if (pos.qty <= 1e-12) delete trader.positions[symbol];
+    if (pos && pos.qty > 1e-12) {
+      // close/trim long
+      if (qty > pos.qty + 1e-12) return { ok: false, error: 'insufficient position' };
+      realizedPnl = qty * (price - pos.avgEntry) - fee;
+      trader.cash += notional - fee;
+      trader.realizedPnl += realizedPnl;
+      pos.qty -= qty;
+      if (pos.qty <= 1e-12) delete trader.positions[symbol];
+    } else if (pos && pos.qty < -1e-12) {
+      return { ok: false, error: 'already short; buy to cover first' };
+    } else {
+      // open short (paper margin: no leverage)
+      if (Number.isFinite(equity) && notional > equity + 1e-9) {
+        return { ok: false, error: 'short exceeds paper equity (no leverage)' };
+      }
+      trader.cash += notional - fee;
+      trader.positions[symbol] = { qty: -qty, avgEntry: price };
+    }
   }
 
   const trade = {

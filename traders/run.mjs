@@ -21,11 +21,14 @@ const PUSH_EVERY_MS = 10 * 60 * 1000;
 const HISTORY_CAP = 120;
 const MAX_DAILY_DRAWDOWN = 0.20; // kill-switch: stop if down 20% on the day
 
+// Jay's own Pine-script strategies. The private/ dir is gitignored — his IP, never published.
 const STRATEGIES = [
-  { file: './strategies/momentum.mjs', key: 'momentum' },
-  { file: './strategies/dip.mjs', key: 'dip' },
-  { file: './strategies/trend.mjs', key: 'trend' },
+  { file: './private/noskip.mjs', key: 'noskip' },     // A: No-Skip momentum -> STONE
+  { file: './private/unibot49.mjs', key: 'unibot49' }, // B: UniBotPro V49 -> BTC
+  { file: './private/unibot31.mjs', key: 'unibot31' }, // C: UniBotPro V31 Apex -> ETH/SOL
+  { file: './private/monck.mjs', key: 'monck' },       // D: Monck Lorentzian ML -> LDO/JTO
 ];
+const RETIRED_STRATEGIES = new Set(['momentum', 'dip', 'trend']); // old public bots, retired
 
 mkdirSync(LOGDIR, { recursive: true });
 
@@ -34,10 +37,20 @@ function todayStr() {
 }
 
 function loadState() {
+  let s;
   if (existsSync(STATE_FILE)) {
-    try { return JSON.parse(readFileSync(STATE_FILE, 'utf8')); } catch { /* fall through */ }
+    try { s = JSON.parse(readFileSync(STATE_FILE, 'utf8')); } catch { /* fall through */ }
   }
-  return { engine: newState(), history: {}, day: {}, meta: {}, lastPush: 0 };
+  if (!s) s = { engine: newState(), history: {}, day: {}, meta: {}, lastPush: 0 };
+  // retire the old public-strategy bots (they never traded — no history lost)
+  for (const t of Object.values(s.engine.traders || {})) {
+    if (RETIRED_STRATEGIES.has(t.strategyKey) && (!t.trades || t.trades.length === 0)) {
+      delete s.engine.traders[t.id];
+      delete s.day[t.strategyKey];
+      delete s.meta[t.strategyKey];
+    }
+  }
+  return s;
 }
 
 function saveState(s) {
@@ -114,7 +127,8 @@ async function cycle() {
         const px = prices[sym];
         if (px == null) continue;
         const qty = trader.positions[sym].qty;
-        const res = placePaperTrade(s.engine, trader.id, { symbol: sym, side: 'sell', qty, price: px, at: now });
+        const side = qty > 0 ? 'sell' : 'buy'; // cover shorts too
+        const res = placePaperTrade(s.engine, trader.id, { symbol: sym, side, qty: Math.abs(qty), price: px, at: now });
         if (res.ok) newTrades.push({ ...res.trade, trader: trader.name, killSwitch: true });
       }
       log(`${trader.name}: ⛔ DAILY STOP HIT (${((1 - equity / d.startEquity) * 100).toFixed(1)}% down) — flattened, done for the day`);
@@ -136,20 +150,23 @@ async function cycle() {
       const sym = String(a.symbol || '').toUpperCase();
       const px = prices[sym];
       if (px == null) { log(`${trader.name}: skip ${a.type} ${sym} — no fresh price`); continue; }
-      if (a.type === 'buy') {
-        const fraction = Math.min(Math.max(Number(a.fraction) || 0, 0), 0.5);
+      const fraction = Math.min(Math.max(Number(a.fraction) || 0, 0), 0.5);
+      if (a.type === 'close') {
+        const pos = trader.positions[sym];
+        if (!pos) continue;
+        const side = pos.qty > 0 ? 'sell' : 'buy'; // buy = cover a short
+        const closeQty = Math.abs(pos.qty);
+        const res = placePaperTrade(s.engine, trader.id, { symbol: sym, side, qty: closeQty, price: px, at: now });
+        if (res.ok) { newTrades.push({ ...res.trade, trader: trader.name }); log(`${trader.name}: CLOSE ${closeQty.toFixed(6)} ${sym} @ $${px} pnl ${res.trade.realizedPnl >= 0 ? '+' : ''}$${res.trade.realizedPnl.toFixed(2)}`); }
+        else log(`${trader.name}: close rejected: ${res.error}`);
+      } else if (a.type === 'buy' || a.type === 'sell') {
+        // buy = open long, sell = open short; strategies close before flipping
         if (fraction <= 0) continue;
         if (trader.positions[sym]) continue; // one position per coin
         const qty = (equity * fraction) / px;
-        const res = placePaperTrade(s.engine, trader.id, { symbol: sym, side: 'buy', qty, price: px, at: now });
-        if (res.ok) { newTrades.push({ ...res.trade, trader: trader.name }); log(`${trader.name}: BUY ${qty.toFixed(6)} ${sym} @ $${px}`); }
-        else log(`${trader.name}: buy rejected: ${res.error}`);
-      } else if (a.type === 'sell') {
-        const pos = trader.positions[sym];
-        if (!pos) continue;
-        const res = placePaperTrade(s.engine, trader.id, { symbol: sym, side: 'sell', qty: pos.qty, price: px, at: now });
-        if (res.ok) { newTrades.push({ ...res.trade, trader: trader.name }); log(`${trader.name}: SELL ${pos.qty.toFixed(6)} ${sym} @ $${px} pnl ${res.trade.realizedPnl >= 0 ? '+' : ''}$${res.trade.realizedPnl.toFixed(2)}`); }
-        else log(`${trader.name}: sell rejected: ${res.error}`);
+        const res = placePaperTrade(s.engine, trader.id, { symbol: sym, side: a.type, qty, price: px, at: now, equity });
+        if (res.ok) { newTrades.push({ ...res.trade, trader: trader.name }); log(`${trader.name}: ${a.type === 'buy' ? 'LONG' : 'SHORT'} ${qty.toFixed(6)} ${sym} @ $${px}`); }
+        else log(`${trader.name}: ${a.type} rejected: ${res.error}`);
       }
     }
   }

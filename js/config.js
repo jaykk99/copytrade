@@ -15,6 +15,13 @@ export const CONFIG = {
     DOGE:{ coingeckoId: 'dogecoin',  name: 'Dogecoin', decimals: 2 },
     ADA: { coingeckoId: 'cardano',   name: 'Cardano',   decimals: 2 },
     AVAX:{ coingeckoId: 'avalanche-2', name: 'Avalanche', decimals: 4 },
+    // Liquid-staking / liquid-restaking plays (Jay's watchlist)
+    STONE:{ coingeckoId: 'stakestone-ether', name: 'StakeStone ETH', decimals: 2 },
+    LDO: { coingeckoId: 'lido-dao', name: 'Lido DAO', decimals: 4 },
+    RPL: { coingeckoId: 'rocket-pool', name: 'Rocket Pool', decimals: 3 },
+    JTO: { coingeckoId: 'jito-governance-token', name: 'Jito', decimals: 3 },
+    JUP: { coingeckoId: 'jupiter-exchange-solana', name: 'Jupiter', decimals: 3 },
+    ENA: { coingeckoId: 'ethena', name: 'Ethena', decimals: 3 },
   },
   COINGECKO_URL: 'https://api.coingecko.com/api/v3/simple/price',
   COINCAP_URL: 'https://api.coincap.io/v2/assets',

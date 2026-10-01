@@ -1,1 +1,1 @@
-{"updatedAt":1790817605941,"trades":[]}
+{"updatedAt":1790817606630,"trades":[{"id":"tx_muoukcur_2","traderId":"tr_muoukcuk_1","symbol":"STONE","side":"buy","qty":1.0485807459603427,"price":2861.01,"notional":3000,"fee":3,"at":1790817606630,"realizedPnl":null,"trader":"NoSkip-STONE"},{"id":"tx_muoukcv1_4","traderId":"tr_muoukcuy_3","symbol":"BTC","side":"buy","qty":0.035890319184571945,"price":83588,"notional":2999.9999999999995,"fee":2.9999999999999996,"at":1790817606630,"realizedPnl":null,"trader":"UniBotPro-V49"}]}

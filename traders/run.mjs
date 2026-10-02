@@ -61,8 +61,23 @@ function log(msg) {
   console.log(new Date().toISOString(), msg);
 }
 
+function lockOwnerAlive() {
+  // A stale lock (supervisor SIGKILLed/OOMed/rebooted mid-cycle) must never
+  // permanently block trading. Treat a lock as valid only if its PID lives.
+  try {
+    const pid = parseInt(readFileSync(LOCK_FILE, 'utf8').trim(), 10);
+    if (!Number.isFinite(pid)) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch { return false; }
+}
+
 async function main() {
-  if (existsSync(LOCK_FILE)) { log('previous run still active, skipping'); return; }
+  if (existsSync(LOCK_FILE)) {
+    if (lockOwnerAlive()) { log('previous run still active, skipping'); return; }
+    log('stale lock found (owner gone) — removing and continuing');
+    try { (await import('fs')).unlinkSync(LOCK_FILE); } catch { /* noop */ }
+  }
   writeFileSync(LOCK_FILE, String(process.pid));
   try {
     await cycle();

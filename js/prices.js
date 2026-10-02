@@ -7,13 +7,25 @@ import { CONFIG } from './config.js';
 const ids = Object.values(CONFIG.SYMBOLS).map(s => s.coingeckoId).join(',');
 const coincapIds = Object.keys(CONFIG.SYMBOLS).map(s => s.toLowerCase()).join(',');
 
+const FETCH_TIMEOUT_MS = 20000; // never hang a trading cycle on a stalled price API
+
+async function fetchWithTimeout(fetchFn, url, ms = FETCH_TIMEOUT_MS) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try {
+    return await fetchFn(url, { signal: ctl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export function createPriceFeed(fetchImpl) {
   const fetchFn = fetchImpl || fetch;
   const cache = new Map(); // symbol -> { price, at }
 
   async function fromCoinGecko() {
     const url = `${CONFIG.COINGECKO_URL}?ids=${ids}&vs_currencies=usd`;
-    const res = await fetchFn(url);
+    const res = await fetchWithTimeout(fetchFn, url);
     if (!res.ok) throw new Error('coingecko ' + res.status);
     const data = await res.json();
     const out = {};
@@ -26,7 +38,7 @@ export function createPriceFeed(fetchImpl) {
 
   async function fromCoinCap() {
     const url = `${CONFIG.COINCAP_URL}?ids=${coincapIds}`;
-    const res = await fetchFn(url);
+    const res = await fetchWithTimeout(fetchFn, url);
     if (!res.ok) throw new Error('coincap ' + res.status);
     const data = await res.json();
     const out = {};

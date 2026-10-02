@@ -145,7 +145,7 @@ function placeTrade() {
   for (const m of mirrored) {
     if (m.result.ok) {
       const f = getTrader(state, m.followerId);
-      copyFeed.unshift({ at: Date.now(), text: `${f.name} copied ${side.toUpperCase()} ${m.result.trade.qty.toFixed(6)} ${sym}` });
+      copyFeed.unshift({ at: Date.now(), text: `${String(f.name).replace(/[<>&"]/g, '')} copied ${side.toUpperCase()} ${m.result.trade.qty.toFixed(6)} ${sym}` });
     }
   }
   copyFeed = copyFeed.slice(0, 30);

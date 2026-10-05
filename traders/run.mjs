@@ -212,7 +212,7 @@ async function cycle() {
   // push published files every ~10 min
   if (now - (s.lastPush || 0) > PUSH_EVERY_MS) {
     try {
-      execSync(`cd ${ROOT} && git add trader-logs/leaderboard.json trader-logs/trades.json && git diff --cached --quiet || git commit -m "bot leaderboard update (paper)" && git push origin master`, { timeout: 60000, stdio: 'pipe' });
+      execSync(`cd ${ROOT} && git add trader-logs/leaderboard.json trader-logs/trades.json && git diff --cached --quiet || (git pull --rebase origin master >/dev/null 2>&1; git commit -m "bot leaderboard update (paper)" && git push origin master)`, { timeout: 90000, stdio: 'pipe' });
       s.lastPush = now;
       saveState(s);
       log('pushed leaderboard to live site');

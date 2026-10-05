@@ -138,7 +138,7 @@ function placeTrade() {
   }
   const qty = parseFloat($('trade-qty').value);
   const g = feed.get(sym);
-  const r = placePaperTrade(state, t.id, { symbol: sym, side, qty, price: g.price });
+  const r = placePaperTrade(state, t.id, { symbol: sym, side, qty, price: g.price, equity: portfolioValue(t, priceOf) });
   if (!r.ok) { msg('trade-msg', r.error, 'err'); return; }
   // mirror to followers (paper only)
   const mirrored = mirrorTrade(state, r.trade, priceOf);

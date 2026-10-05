@@ -70,7 +70,9 @@ export function placePaperTrade(state, traderId, opts) {
   const price = Number(opts.price);
   if (!Number.isFinite(price) || price <= 0) return { ok: false, error: 'invalid price' };
   const at = Number(opts.at) > 0 ? Number(opts.at) : Date.now();
-  const equity = Number(opts.equity);
+  // Fail-closed: callers should pass portfolio equity; if missing, cap at cash
+  // (conservative lower bound) instead of skipping the no-leverage guard.
+  const equity = Number.isFinite(Number(opts.equity)) ? Number(opts.equity) : trader.cash;
 
   const notional = qty * price;
   const fee = notional * CONFIG.PAPER_FEE_RATE;
@@ -113,7 +115,7 @@ export function placePaperTrade(state, traderId, opts) {
       return { ok: false, error: 'already short; buy to cover first' };
     } else {
       // open short (paper margin: no leverage)
-      if (Number.isFinite(equity) && notional > equity + 1e-9) {
+      if (notional > equity + 1e-9) {
         return { ok: false, error: 'short exceeds paper equity (no leverage)' };
       }
       trader.cash += notional - fee;

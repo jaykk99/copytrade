@@ -1,7 +1,7 @@
 // Copy trading: mirror a leader's PAPER trades into a follower's PAPER account.
 // Everything stays simulated. A follower mirrors with a fraction of the leader's
 // notional size, executed at the follower's current market price.
-import { getTrader, placePaperTrade } from './engine.js';
+import { getTrader, placePaperTrade, portfolioValue } from './engine.js';
 
 export function followTrader(state, followerId, leaderId, fraction) {
   const follower = getTrader(state, followerId);
@@ -45,14 +45,14 @@ export function mirrorTrade(state, leaderTrade, priceOf) {
     }
     let result;
     if (leaderTrade.side === 'buy') {
-      result = placePaperTrade(state, f.followerId, { symbol: leaderTrade.symbol, side: 'buy', qty, price: px });
+      result = placePaperTrade(state, f.followerId, { symbol: leaderTrade.symbol, side: 'buy', qty, price: px, equity: portfolioValue(getTrader(state, f.followerId), priceOf) });
     } else {
       // mirror sells: sell the same fraction of the follower's position, capped at what they hold
       const follower = getTrader(state, f.followerId);
       const pos = follower.positions[leaderTrade.symbol];
       const sellQty = pos ? Math.min(qty, pos.qty) : 0;
       result = sellQty > 0
-        ? placePaperTrade(state, f.followerId, { symbol: leaderTrade.symbol, side: 'sell', qty: sellQty, price: px })
+        ? placePaperTrade(state, f.followerId, { symbol: leaderTrade.symbol, side: 'sell', qty: sellQty, price: px, equity: portfolioValue(follower, priceOf) })
         : { ok: false, error: 'follower holds none' };
     }
     if (result.ok) result.trade.copiedFrom = leaderTrade.traderId;

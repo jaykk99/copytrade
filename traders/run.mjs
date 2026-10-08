@@ -3,6 +3,7 @@
 // Run via cron every 2 minutes. Never trades on stale/invented prices.
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { execSync } from 'child_process';
+import { pathToFileURL } from 'url';
 import { CONFIG } from '../js/config.js';
 import { createPriceFeed } from '../js/prices.js';
 import {
@@ -72,6 +73,22 @@ function lockOwnerAlive() {
   } catch { return false; }
 }
 
+// Load one strategy module. Returns { ok: true, mod } or { ok: false, reason }.
+// The reason carries the real import error (missing file vs. syntax error vs.
+// missing export) so a silently-skipped strategy is diagnosable instead of
+// just "not ready yet".
+export async function loadStrategy(strat) {
+  try {
+    const mod = await import(strat.file);
+    if (typeof mod.decide !== 'function') {
+      return { ok: false, reason: `module loaded but has no decide() export (${strat.file})` };
+    }
+    return { ok: true, mod };
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message).slice(0, 160) };
+  }
+}
+
 async function main() {
   if (existsSync(LOCK_FILE)) {
     if (lockOwnerAlive()) { log('previous run still active, skipping'); return; }
@@ -113,9 +130,9 @@ async function cycle() {
   const newTrades = [];
 
   for (const strat of STRATEGIES) {
-    let mod = null;
-    try { mod = await import(strat.file); }
-    catch (e) { log(`${strat.key}: strategy module not ready yet`); continue; }
+    const loaded = await loadStrategy(strat);
+    if (!loaded.ok) { log(`${strat.key}: strategy module not ready yet (${loaded.reason})`); continue; }
+    const mod = loaded.mod;
 
     // find or create this strategy's paper trader
     let trader = Object.values(s.engine.traders).find(t => t.strategyKey === strat.key);
@@ -220,4 +237,10 @@ async function cycle() {
   }
 }
 
-main().catch(e => { console.error('FATAL', e); process.exit(1); });
+// Only run the supervisor loop when executed directly; importing this module
+// (e.g. in tests) must not start trading.
+const IS_ENTRY = (() => {
+  try { return !!process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url; }
+  catch { return false; }
+})();
+if (IS_ENTRY) main().catch(e => { console.error('FATAL', e); process.exit(1); });

@@ -30,3 +30,4 @@ node tests/run.mjs   # 23 assertions: trade -> leaderboard -> copy
 ## Roadmap
 
 - Phase 2 (separate approval): live-money copy execution — NOT started, NOT in a callable path.
+human change

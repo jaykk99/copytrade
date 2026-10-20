@@ -16,7 +16,7 @@ Paper-trade crypto with **real market prices** (CoinGecko/CoinCap, keyless), cli
 Static site, no build step. Open `index.html` or deploy to any static host.
 
 ```bash
-node tests/run.mjs   # 17 engine tests: trade -> leaderboard -> copy
+node tests/run.mjs   # 23 assertions: trade -> leaderboard -> copy
 ```
 
 ## How it works

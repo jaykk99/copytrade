@@ -229,10 +229,11 @@ async function cycle() {
   // push published files every ~10 min
   if (now - (s.lastPush || 0) > PUSH_EVERY_MS) {
     try {
-      // Self-healing push: merge remote (usually only human commits like README fixes)
-      // instead of rebase; if both sides touched the machine-generated logs,
-      // keep ours (freshest runner data) and continue the merge. Never force-push.
-      execSync(`cd ${ROOT} && git add trader-logs/leaderboard.json trader-logs/trades.json && git diff --cached --quiet || (git fetch origin master >/dev/null 2>&1; if git merge --no-edit origin/master >/dev/null 2>&1; then true; else git checkout --ours -- trader-logs/leaderboard.json trader-logs/trades.json && git add trader-logs/leaderboard.json trader-logs/trades.json && GIT_EDITOR=true git merge --continue >/dev/null 2>&1; fi; git commit -m "bot leaderboard update (paper)" && git push origin master)`, { timeout: 90000, stdio: 'pipe' });
+      // Self-healing push: commit the bot data first, then merge remote (usually only
+      // human commits like README fixes) instead of rebase; if both sides touched
+      // the machine-generated logs, keep ours (freshest runner data) and continue
+      // the merge. Never force-push.
+      execSync(`cd ${ROOT} && git add trader-logs/leaderboard.json trader-logs/trades.json && git diff --cached --quiet || (git commit -m "bot leaderboard update (paper)" && git fetch origin master >/dev/null 2>&1 && (git merge --no-edit origin/master >/dev/null 2>&1 || (git checkout --ours -- trader-logs/leaderboard.json trader-logs/trades.json && git add trader-logs/leaderboard.json trader-logs/trades.json && GIT_EDITOR=true git merge --continue >/dev/null 2>&1)) && git push origin master)`, { timeout: 90000, stdio: 'pipe' });
       s.lastPush = now;
       saveState(s);
       log('pushed leaderboard to live site');

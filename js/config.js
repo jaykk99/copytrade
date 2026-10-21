@@ -27,4 +27,12 @@ export const CONFIG = {
   COINCAP_URL: 'https://api.coincap.io/v2/assets',
   BLOCKCHAIR_URL: 'https://api.blockchair.com',
   STORAGE_KEY: 'copytrade_paper_v1',
+  // Paper-only risk rails (see js/risk.js). Simulator guards, not real-money controls.
+  RISK: {
+    MAX_POSITION_PCT: 0.5,
+    MAX_TRADE_NOTIONAL_PCT: 0.25,
+    MAX_OPEN_POSITIONS: 5,
+    DAILY_LOSS_LIMIT_PCT: 0.05,
+    LOSS_STREAK_COOLDOWN: 3,
+  },
 };

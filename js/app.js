@@ -9,6 +9,9 @@ import {
 import { followTrader, unfollowTrader, mirrorTrade, following } from './copy.js';
 import { detectChain, fetchAddressBalance, shortAddress } from './wallet.js';
 import { LIVE_TRADING_ENABLED } from './live-trading.js';
+import { traderReport, compareTraders } from './analytics.js';
+import { checkTrade, riskStatus, placeTradeWithRisk } from './risk.js';
+import { tradesToCsv, leaderboardToCsv, perSymbolToCsv, monthlyToCsv, downloadCsv } from './export.js';
 
 const $ = id => document.getElementById(id);
 const fmt$ = n => (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -138,8 +141,14 @@ function placeTrade() {
   }
   const qty = parseFloat($('trade-qty').value);
   const g = feed.get(sym);
-  const r = placePaperTrade(state, t.id, { symbol: sym, side, qty, price: g.price, equity: portfolioValue(t, priceOf) });
-  if (!r.ok) { msg('trade-msg', r.error, 'err'); return; }
+  // risk rails run BEFORE the engine: paper guards, not real-money controls
+  const r = placeTradeWithRisk(placePaperTrade, state, t.id,
+    { symbol: sym, side, qty, price: g.price, equity: portfolioValue(t, priceOf) }, priceOf);
+  if (!r.ok) {
+    const v = (r.violations || []).map(x => `${x.rule}: ${x.detail}`).join(' · ');
+    msg('trade-msg', (r.error || 'blocked') + (v ? ' — ' + v : ''), 'err');
+    return;
+  }
   // mirror to followers (paper only)
   const mirrored = mirrorTrade(state, r.trade, priceOf);
   for (const m of mirrored) {
@@ -197,6 +206,7 @@ function showBotDetail(row) {
   $('detail-name').textContent = '🤖 ' + row.name + ' — every trade (paper)';
   const el = $('trader-detail');
   const trades = (botBoardCache.recentTrades || []).filter(t => t.trader === row.name).slice(0, 50);
+  detailTrades = trades.map(t => ({ ...t, traderId: t.traderId || row.id }));
   el.innerHTML = trades.length ? '' : '<p class="muted">No trades recorded yet.</p>';
   for (const tr of trades) {
     const div = document.createElement('div');
@@ -237,6 +247,7 @@ function showTraderDetail(id) {
   $('detail-name').textContent = t.name + ' — every trade';
   const el = $('trader-detail');
   const hist = tradeHistory(state, id, 50);
+  detailTrades = hist;
   el.innerHTML = hist.length ? '' : '<p class="muted">No trades recorded.</p>';
   for (const tr of hist) el.appendChild(tradeRow(tr, false));
   card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -352,6 +363,184 @@ function doImport() {
   box.focus();
 }
 
+// ---------- risk panel ----------
+function renderRiskPanel() {
+  const t = ensureTrader();
+  const el = $('risk-panel');
+  const rs = riskStatus(state, t.id, priceOf);
+  if (!rs) { el.innerHTML = '<p class="muted">No trader.</p>'; return; }
+  const dayUse = (Math.abs(rs.dailyPnlPct) / rs.dailyLimitPct) * 100;
+  const dayCls = rs.dayStopped ? 'risk-bad' : dayUse > 80 ? 'risk-warn' : 'risk-ok';
+  const posRows = rs.positions.length
+    ? rs.positions.map(p => {
+        const pct = p.pctOfEquity == null ? '—' : (p.pctOfEquity * 100).toFixed(1) + '%';
+        const over = p.pctOfEquity != null && p.pctOfEquity > rs.maxPositionPct;
+        return `<div class="risk-row"><span>${p.symbol} ${p.qty > 0 ? 'long' : 'short'} ${Math.abs(p.qty).toFixed(6)}</span>
+          <span class="${over ? 'risk-bad' : ''}">${pct} of equity</span></div>`;
+      }).join('')
+    : '<p class="muted">No open positions.</p>';
+  el.innerHTML = `
+    <div class="risk-row"><span>Daily P&amp;L</span><span class="${rs.dailyPnl >= 0 ? 'pos' : 'neg'}">${rs.dailyPnl >= 0 ? '+' : ''}${fmt$(rs.dailyPnl)} (${(rs.dailyPnlPct * 100).toFixed(2)}%)</span></div>
+    <div class="risk-row"><span>Day-limit used</span><span class="${dayCls}">${dayUse.toFixed(0)}% of ${(rs.dailyLimitPct * 100).toFixed(0)}%${rs.dayStopped ? ' — DAY STOPPED' : ''}</span></div>
+    <div class="risk-row"><span>Loss streak</span><span class="${rs.lossStreak >= rs.cooldownAfter ? 'risk-bad' : ''}">${rs.lossStreak} straight${rs.lossStreak >= rs.cooldownAfter ? ' — new opens paused' : ''}</span></div>
+    <div class="risk-row"><span>Open positions</span><span>${rs.openCount} / ${rs.maxOpen}</span></div>
+    ${posRows}
+    <p class="muted small" style="margin:8px 0 0">Rules: one trade ≤ ${(rs.maxTradePct * 100).toFixed(0)}% equity · one symbol ≤ ${(rs.maxPositionPct * 100).toFixed(0)}% · day stop at −${(rs.dailyLimitPct * 100).toFixed(0)}% · ${rs.cooldownAfter} straight losses pauses new opens.</p>`;
+}
+
+// ---------- stats tab ----------
+let detailTraderId = null;
+let detailTrades = [];
+let statsTraderId = null;
+
+function refreshStatsSelects() {
+  traderOptions($('stats-trader'), statsTraderId || ensureTrader().id);
+  statsTraderId = $('stats-trader').value;
+  const ca = $('compare-a').value, cb = $('compare-b').value;
+  traderOptions($('compare-a'), ca);
+  traderOptions($('compare-b'), cb);
+  if (!$('compare-a').value || !$('compare-b').value) {
+    const ids = Object.keys(state.traders);
+    if (ids[0]) $('compare-a').value = ids[0];
+    if (ids[1]) $('compare-b').value = ids[1];
+    else if (ids[0]) $('compare-b').value = ids[0];
+  }
+}
+
+function traderOptions(select, selectedId) {
+  select.innerHTML = '';
+  const traders = Object.values(state.traders).sort((a, b) => a.name.localeCompare(b.name));
+  for (const t of traders) {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = `${t.name} (${t.trades.length} trades)`;
+    select.appendChild(o);
+  }
+  if (selectedId && state.traders[selectedId]) select.value = selectedId;
+}
+
+function fmtPct(x, digits = 1) {
+  if (x == null || !Number.isFinite(x)) return '—';
+  return (x * 100).toFixed(digits) + '%';
+}
+function fmtNum(x, digits = 2) {
+  if (x == null || !Number.isFinite(x)) return '—';
+  return x.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+
+function statCell(label, value, sub) {
+  return `<div class="stat-cell"><label>${label}</label><b>${value}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
+}
+
+function renderStatsTab() {
+  const me = ensureTrader();
+  if (!statsTraderId || !state.traders[statsTraderId]) statsTraderId = me.id;
+  const t = getTrader(state, statsTraderId) || me;
+  const rep = traderReport(t, priceOf);
+  const s = rep.stats;
+
+  const cards = [
+    statCell('Win rate', fmtPct(s.winRate, 0), `${s.closed} closed`),
+    statCell('Profit factor', s.profitFactor == null ? '—' : (s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2)), 'gross win / gross loss'),
+    statCell('Sharpe', rep.sharpe == null ? '—' : (rep.sharpe === Infinity ? '∞' : rep.sharpe.toFixed(2)), `${rep.equityCurve.length} steps`),
+    statCell('Max drawdown', fmtPct(rep.drawdown.drawdownPct), rep.drawdown.troughAt ? 'trough ' + fmtT(rep.drawdown.troughAt) : ''),
+    statCell('Expectancy', s.expectancy == null ? '—' : fmt$(s.expectancy), 'per closed trade'),
+    statCell('Avg win / loss', `${s.avgWin == null ? '—' : fmt$(s.avgWin)} / ${s.avgLoss == null ? '—' : fmt$(s.avgLoss)}`, ''),
+    statCell('Best / worst', `${s.largestWin == null ? '—' : fmt$(s.largestWin)} / ${s.largestLoss == null ? '—' : fmt$(s.largestLoss)}`, ''),
+    statCell('Streaks', `${s.maxWinStreak}W / ${s.maxLossStreak}L`, `fees paid ${fmt$(s.totalFees)}`),
+  ];
+  $('stats-cards').innerHTML = cards.join('');
+
+  drawEquityCurve($('equity-canvas'), rep.equityCurve);
+  $('equity-note').textContent = `${rep.equityCurve.length} points · start ${fmt$(CONFIG.PAPER_STARTING_BALANCE_USD)} · live value ${rep.liveValue == null ? '—' : fmt$(rep.liveValue)}`;
+
+  const sb = $('stats-symbol-table').querySelector('tbody');
+  sb.innerHTML = rep.perSymbol.length ? '' : '<tr><td colspan="6" class="muted">No trades yet.</td></tr>';
+  for (const r of rep.perSymbol) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b>${r.symbol}</b></td><td>${r.trades}</td><td>${fmtPct(r.winRate, 0)}</td>
+      <td class="${r.realizedPnl >= 0 ? 'pos' : 'neg'}">${r.realizedPnl >= 0 ? '+' : ''}${fmt$(r.realizedPnl)}</td>
+      <td>${fmt$(r.volume)}</td><td>${fmt$(r.fees)}</td>`;
+    sb.appendChild(tr);
+  }
+
+  const mb = $('stats-month-table').querySelector('tbody');
+  mb.innerHTML = rep.monthly.length ? '' : '<tr><td colspan="2" class="muted">No closed trades yet.</td></tr>';
+  for (const m of rep.monthly) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b>${m.month}</b></td>
+      <td class="${m.pnl >= 0 ? 'pos' : 'neg'}">${m.pnl >= 0 ? '+' : ''}${fmt$(m.pnl)}</td>`;
+    mb.appendChild(tr);
+  }
+
+  renderCompare();
+}
+
+function drawEquityCurve(canvas, curve) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 320, h = 180;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!curve || curve.length < 2) {
+    ctx.fillStyle = '#8b98ad'; ctx.font = '13px sans-serif';
+    ctx.fillText('Need at least 2 trades for a curve.', 12, h / 2);
+    return;
+  }
+  const vals = curve.map(p => p.value);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = (hi - lo) * 0.12 || Math.abs(hi) * 0.01 || 1;
+  const X = i => 10 + (i / (curve.length - 1)) * (w - 20);
+  const Y = v => (h - 14) - ((v - (lo - pad)) / ((hi - lo) + 2 * pad)) * (h - 28);
+  // start-balance line
+  ctx.strokeStyle = '#3b82f6'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, Y(CONFIG.PAPER_STARTING_BALANCE_USD)); ctx.lineTo(w, Y(CONFIG.PAPER_STARTING_BALANCE_USD)); ctx.stroke();
+  ctx.setLineDash([]);
+  // area + line
+  const up = vals[vals.length - 1] >= CONFIG.PAPER_STARTING_BALANCE_USD;
+  const col = up ? '#22c55e' : '#ef4444';
+  ctx.beginPath();
+  ctx.moveTo(X(0), Y(vals[0]));
+  for (let i = 1; i < vals.length; i++) ctx.lineTo(X(i), Y(vals[i]));
+  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+  ctx.lineTo(X(vals.length - 1), h); ctx.lineTo(X(0), h); ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, up ? 'rgba(34,197,94,.25)' : 'rgba(239,68,68,.25)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad; ctx.fill();
+  // min/max labels
+  ctx.fillStyle = '#8b98ad'; ctx.font = '11px sans-serif';
+  ctx.fillText(fmt$(hi), 12, 14);
+  ctx.fillText(fmt$(lo), 12, h - 6);
+}
+
+function renderCompare() {
+  const a = getTrader(state, $('compare-a').value);
+  const b = getTrader(state, $('compare-b').value);
+  $('cmp-head-a').textContent = a ? a.name : 'A';
+  $('cmp-head-b').textContent = b ? b.name : 'B';
+  const tb = $('compare-table').querySelector('tbody');
+  tb.innerHTML = '';
+  if (!a || !b) { tb.innerHTML = '<tr><td colspan="3" class="muted">Pick two traders.</td></tr>'; return; }
+  const cmp = compareTraders(a, b, priceOf);
+  const fm = {
+    'Total P&L': v => v == null ? '—' : (v >= 0 ? '+' : '') + fmt$(v),
+    'Win rate': v => fmtPct(v, 0),
+    'Profit factor': v => v == null ? '—' : (v === Infinity ? '∞' : v.toFixed(2)),
+    'Expectancy / trade': v => v == null ? '—' : fmt$(v),
+    'Max drawdown': v => fmtPct(v),
+    'Sharpe': v => v == null ? '—' : (v === Infinity ? '∞' : v.toFixed(2)),
+    'Trades': v => v,
+  };
+  for (const [label, va, vb] of cmp.rows) {
+    const tr = document.createElement('tr');
+    const f = fm[label] || (v => v);
+    tr.innerHTML = `<td><b>${label}</b></td><td>${f(va)}</td><td>${f(vb)}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
 // ---------- tabs ----------
 document.querySelectorAll('.tabs button').forEach(b => {
   b.onclick = () => {
@@ -418,6 +607,24 @@ function init() {
   // live trading badge reflects the hard-disabled module
   if (!LIVE_TRADING_ENABLED) $('live-badge').textContent = 'LIVE TRADING: DISABLED';
 
+  // stats tab
+  $('stats-trader').onchange = e => { statsTraderId = e.target.value; renderStatsTab(); };
+  $('compare-a').onchange = renderCompare;
+  $('compare-b').onchange = renderCompare;
+  $('btn-csv-trades').onclick = () => {
+    if (!detailTrades.length) { msg('share-msg', 'No trades to export.', 'err'); return; }
+    downloadCsv('copytrade-trades.csv', tradesToCsv(detailTrades));
+  };
+  $('btn-csv-board').onclick = () => downloadCsv('copytrade-leaderboard.csv', leaderboardToCsv(state, priceOf));
+  $('btn-csv-symbol').onclick = () => {
+    const t = getTrader(state, statsTraderId) || ensureTrader();
+    downloadCsv('copytrade-per-symbol.csv', perSymbolToCsv(traderReport(t, priceOf).perSymbol));
+  };
+  $('btn-csv-monthly').onclick = () => {
+    const t = getTrader(state, statsTraderId) || ensureTrader();
+    downloadCsv('copytrade-monthly.csv', monthlyToCsv(traderReport(t, priceOf).monthly));
+  };
+
   ensureTrader();
   renderAll();
   refreshPrices();
@@ -431,6 +638,9 @@ function renderAll() {
   renderBoard();
   renderBotBoard();
   renderCopy();
+  renderRiskPanel();
+  refreshStatsSelects();
+  renderStatsTab();
   renderWallet();
 }
 

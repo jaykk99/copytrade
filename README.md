@@ -16,12 +16,16 @@ Paper-trade crypto with **real market prices** (CoinGecko/CoinCap, keyless), cli
 Static site, no build step. Open `index.html` or deploy to any static host.
 
 ```bash
-node tests/run.mjs   # 23 assertions: trade -> leaderboard -> copy
+node tests/run.mjs   # 45 assertions: trade -> leaderboard -> copy -> analytics -> risk -> backtest -> csv
 ```
 
 ## How it works
 
 - `js/engine.js` — paper engine: $10,000 start, 0.1% paper fee, positions, realized/unrealized P&L, leaderboard, share-code export/import
+- `js/analytics.js` — per-trader analytics: equity curve, max drawdown, Sharpe/Sortino, profit factor, expectancy, streaks, per-symbol + monthly breakdowns, head-to-head compare
+- `js/risk.js` — paper-only risk rails: max trade/position size, daily loss limit (day stop), max open positions, loss-streak cooldown; live risk panel in the UI
+- `js/backtest.js` — replay/audit engine: recompute realized P&L from recorded trades and flag mismatches; run signal strategies over price series (SMA crossover example)
+- `js/export.js` — CSV export for trades, leaderboard, per-symbol and monthly breakdowns
 - `js/copy.js` — follow a trader at 10/25/50%; their paper trades mirror into your paper account at live prices
 - `js/prices.js` — CoinGecko primary, CoinCap fallback, stale-price guard
 - `js/wallet.js` — read-only address balances (Blockchair, keyless)

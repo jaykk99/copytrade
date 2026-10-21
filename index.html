@@ -20,6 +20,7 @@
     <button data-tab="trade" class="active">Trade</button>
     <button data-tab="board">🏆 Board</button>
     <button data-tab="copy">🔁 Copy</button>
+    <button data-tab="stats">📊 Stats</button>
     <button data-tab="wallet">👛 Wallet</button>
   </nav>
 
@@ -61,6 +62,12 @@
       </div>
 
       <div class="card">
+        <h3>🛡 Risk rails <span class="paper-badge">PAPER</span></h3>
+        <p class="muted small">Simulator guards — they block paper trades that break the rules below. Not real-money controls.</p>
+        <div id="risk-panel"><p class="muted">Loading…</p></div>
+      </div>
+
+      <div class="card">
         <h3>My trades</h3>
         <div id="my-trades"><p class="muted">No trades yet.</p></div>
       </div>
@@ -93,6 +100,10 @@
       </div>
       <div class="card hidden" id="trader-detail-card">
         <h3 id="detail-name">Trader</h3>
+        <div class="row" style="margin-bottom:8px">
+          <button id="btn-csv-trades" class="ghost">⬇ trades CSV</button>
+          <button id="btn-csv-board" class="ghost">⬇ board CSV</button>
+        </div>
         <div id="trader-detail"></div>
       </div>
     </section>
@@ -111,6 +122,47 @@
       <div class="card">
         <h3>Copy feed</h3>
         <div id="copy-feed"><p class="muted">Copied trades will appear here.</p></div>
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <section id="tab-stats" class="tab">
+      <div class="card">
+        <h3>📊 PnL analytics</h3>
+        <div class="row">
+          <select id="stats-trader"></select>
+        </div>
+        <p class="muted small">Built from recorded paper trades only. Sharpe is on per-trade steps — noisy with few trades.</p>
+        <div class="stat-grid" id="stats-cards"></div>
+      </div>
+      <div class="card">
+        <h3>Equity curve</h3>
+        <canvas id="equity-canvas" height="180"></canvas>
+        <p class="muted small" id="equity-note"></p>
+      </div>
+      <div class="card">
+        <h3>Per-symbol</h3>
+        <div class="table-wrap"><table id="stats-symbol-table"><thead><tr>
+          <th>Sym</th><th>Trades</th><th>Win</th><th>Realized</th><th>Volume</th><th>Fees</th>
+        </tr></thead><tbody></tbody></table></div>
+        <div class="row"><button id="btn-csv-symbol" class="ghost">⬇ symbol CSV</button>
+        <button id="btn-csv-monthly" class="ghost">⬇ monthly CSV</button></div>
+      </div>
+      <div class="card">
+        <h3>Monthly realized P&amp;L</h3>
+        <div class="table-wrap"><table id="stats-month-table"><thead><tr>
+          <th>Month</th><th>P&amp;L</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="card">
+        <h3>Head-to-head</h3>
+        <div class="row">
+          <select id="compare-a"></select>
+          <select id="compare-b"></select>
+        </div>
+        <div class="table-wrap"><table id="compare-table"><thead><tr>
+          <th>Metric</th><th id="cmp-head-a">A</th><th id="cmp-head-b">B</th>
+        </tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 

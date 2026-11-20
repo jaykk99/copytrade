@@ -76,6 +76,9 @@ export function placePaperTrade(state, traderId, opts) {
 
   const notional = qty * price;
   const fee = notional * CONFIG.PAPER_FEE_RATE;
+  if (!Number.isFinite(notional) || !Number.isFinite(fee)) {
+    return { ok: false, error: 'trade amount is too large' };
+  }
   let realizedPnl = null;
   const pos = trader.positions[symbol];
 

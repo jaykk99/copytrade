@@ -74,6 +74,18 @@ console.log('engine');
     assert.ok(Math.abs(v - 10581.4) < 1e-9, 'got ' + v);
   });
 
+  t('rejects overflowed notional without mutating paper account', () => {
+    const beforeCash = a.cash;
+    const beforeTrades = a.trades.length;
+    const beforePositions = JSON.stringify(a.positions);
+    const r = placePaperTrade(s, a.id, { symbol: 'BTC', side: 'sell', qty: 1e308, price: 1e308, equity: 1e308 });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /too large/);
+    assert.equal(a.cash, beforeCash);
+    assert.equal(a.trades.length, beforeTrades);
+    assert.equal(JSON.stringify(a.positions), beforePositions);
+  });
+
   t('rejects bad symbol / bad qty', () => {
     assert.ok(!placePaperTrade(s, a.id, { symbol: 'XXX', side: 'buy', qty: 1, price: 1 }).ok);
     assert.ok(!placePaperTrade(s, a.id, { symbol: 'BTC', side: 'buy', qty: -1, price: 1 }).ok);

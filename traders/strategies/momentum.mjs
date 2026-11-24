@@ -1,7 +1,7 @@
 // BreakoutBot — momentum breakout strategy for paper trading.
 // Paper money only. NEVER invent prices: only symbols present in ctx.prices
 // may be referenced. The driver converts action.fraction of equity -> qty at
-// the real price. Sell = full position (fraction ignored).
+// the real price. Close = full position (fraction ignored).
 
 export const STRATEGY_NAME = 'BreakoutBot';
 
@@ -35,7 +35,7 @@ export function decide(ctx) {
 
     const ret = (px - pos.avgEntry) / pos.avgEntry;
     if (ret >= TAKE_PROFIT || ret <= -STOP_LOSS) {
-      actions.push({ type: 'sell', symbol: sym, fraction: 1 });
+      actions.push({ type: 'close', symbol: sym, fraction: 1 });
       openSymbols.delete(sym); // frees the slot for a fresh entry below
       meta[`last_${sym}`] = { exit: px, at: Date.now() };
     }

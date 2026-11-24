@@ -52,7 +52,8 @@ function lossStreak(trader) {
   const trades = [...trader.trades].sort((a, b) => b.at - a.at);
   for (const t of trades) {
     if (typeof t.realizedPnl !== 'number') continue;
-    if (t.realizedPnl <= 0) n++;
+    // a breakeven close ($0) is a scratch, not a loss: it breaks the streak
+    if (t.realizedPnl < 0) n++;
     else break;
   }
   return n;

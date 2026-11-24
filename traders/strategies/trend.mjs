@@ -12,15 +12,15 @@
 //   killed:   boolean kill-switch; when true, return no actions
 //   meta:     persistent scratch object (keeps meta.peaks across cycles)
 //
-// Actions: [{ type:'buy'|'sell', symbol, fraction }]. fraction is the portion of
-// equity the driver converts to qty at the real price. SELL = full position.
+// Actions: [{ type:'buy'|'close', symbol, fraction }]. fraction is the portion of
+// equity the driver converts to qty at the real price. CLOSE = full position.
 //
 // Signals:
 //   BUY  — with ≥26 history points, short MA(8) crosses above long MA(24)
 //          (prev cycle short ≤ long, now short > long) and no open position.
 //          fraction 0.25–0.35 of equity (0.30), max 3 concurrent positions,
 //          one position per coin.
-//   SELL — full position when short crosses back below long, OR trailing stop:
+//   CLOSE — full position when short crosses back below long, OR trailing stop:
 //          price falls ≥5% below the peak since entry (peaks tracked in
 //          meta.peaks, updated each cycle while in position, deleted on exit).
 //
@@ -44,7 +44,7 @@ function ma(points, n) {
 
 /**
  * @param {object} ctx
- * @returns {{ actions: Array<{type:'buy'|'sell',symbol:string,fraction:number}>, meta: object }}
+ * @returns {{ actions: Array<{type:'buy'|'close',symbol:string,fraction:number}>, meta: object }}
  */
 export function decide(ctx) {
   const actions = [];
@@ -84,7 +84,7 @@ export function decide(ctx) {
       const trailingHit = price <= peak * (1 - TRAIL_PCT);
 
       if (deathCross || trailingHit) {
-        actions.push({ type: 'sell', symbol, fraction: 1 });
+        actions.push({ type: 'close', symbol, fraction: 1 });
         delete meta.peaks[symbol];
       }
       continue;

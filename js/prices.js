@@ -60,6 +60,17 @@ export function createPriceFeed(fetchImpl) {
       if (!prices || Object.keys(prices).length === 0) {
         try { prices = await fromCoinCap(); source = 'coincap'; }
         catch { /* fall through */ }
+      } else {
+        // Partial primary: fill the symbols CoinGecko missed from the
+        // fallback instead of leaving them stale until they age out.
+        const missing = Object.keys(CONFIG.SYMBOLS).filter(s => !(s in prices));
+        if (missing.length) {
+          try {
+            const extra = await fromCoinCap();
+            for (const s of missing) if (extra[s] != null) prices[s] = extra[s];
+            if (Object.keys(extra).length) source = 'coingecko+coincap';
+          } catch { /* keep the partial primary */ }
+        }
       }
       const now = Date.now();
       if (prices) {

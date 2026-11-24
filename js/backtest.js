@@ -54,8 +54,14 @@ export function replay(trades, opts = {}) {
         p.qty -= qty;
         if (p.qty <= 1e-12) delete pos[t.symbol];
       } else {
+        // open a short, or add to one: avgEntry is the qty-weighted average,
+        // not the latest price — a later cover's realized P&L depends on it
         cash += notional - fee;
-        pos[t.symbol] = { qty: -(p ? Math.abs(p.qty) + qty : qty), avgEntry: px };
+        const newQty = (p ? Math.abs(p.qty) : 0) + qty;
+        pos[t.symbol] = {
+          qty: -newQty,
+          avgEntry: p && p.qty < 0 ? (Math.abs(p.qty) * p.avgEntry + qty * px) / newQty : px,
+        };
       }
     } else {
       mismatches.push({ tradeId: t.id, issue: 'bad side', trade: t });

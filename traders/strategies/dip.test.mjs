@@ -77,7 +77,7 @@ test('bounce exit fires at +5% vs avgEntry', () => {
   });
   const { actions } = decide(ctx);
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].type, 'sell');
+  assert.equal(actions[0].type, 'close');
   assert.equal(actions[0].symbol, 'BTC');
 });
 
@@ -88,7 +88,7 @@ test('stop-loss fires at -5% vs avgEntry', () => {
   });
   const { actions } = decide(ctx);
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].type, 'sell');
+  assert.equal(actions[0].type, 'close');
   assert.equal(actions[0].symbol, 'BTC');
 });
 
@@ -156,7 +156,7 @@ test('one position per coin: no double-buy of an already-held symbol', () => {
   const hist = bars([112, 111, 110, 109, 108, 107, 106, 105, 104, 103, 102, 96]);
   const ctx = baseCtx({
     // Position is -4% (inside the hold band), dip is a real 14%+ dip,
-    // but we already hold BTC -> no second buy, no sell.
+    // but we already hold BTC -> no second buy, no close.
     trader: { cash: 5000, positions: { BTC: { qty: 0.5, avgEntry: 100 } }, trades: [], realizedPnl: 0 },
     history: { BTC: hist },
     prices: { BTC: 96 },
@@ -172,5 +172,5 @@ test('exits checked even without enough history (no history needed for exits)', 
   });
   const { actions } = decide(ctx);
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].type, 'sell');
+  assert.equal(actions[0].type, 'close');
 });

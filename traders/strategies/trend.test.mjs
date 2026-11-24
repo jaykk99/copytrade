@@ -50,7 +50,7 @@ test('no buy on coins with fewer than 26 history points', () => {
   assert.deepEqual(actions, []);
 });
 
-test('death-cross sell fires (full position)', () => {
+test('death-cross close fires (full position)', () => {
   // 29 flat at 100, last dip to 70: prev MA8 == MA24, now MA8 < MA24
   const ctx = baseCtx({
     trader: { cash: 0, positions: { BTC: { qty: 1, avgEntry: 100 } }, trades: [], realizedPnl: 0 },
@@ -61,7 +61,7 @@ test('death-cross sell fires (full position)', () => {
   });
   const { actions, meta } = decide(ctx);
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].type, 'sell');
+  assert.equal(actions[0].type, 'close');
   assert.equal(actions[0].symbol, 'BTC');
   assert.equal(actions[0].fraction, 1);
   assert.equal(meta.peaks.BTC, undefined, 'peak cleared on exit');
@@ -77,7 +77,7 @@ test('trailing stop fires after a 5% fall from peak', () => {
   });
   const { actions, meta } = decide(ctx);
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].type, 'sell');
+  assert.equal(actions[0].type, 'close');
   assert.equal(actions[0].symbol, 'BTC');
   assert.equal(meta.peaks.BTC, undefined);
 });

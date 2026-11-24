@@ -80,7 +80,7 @@ test('take-profit exit fires at +6% vs avgEntry', () => {
   });
   const { actions } = decide(ctx);
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].type, 'sell');
+  assert.equal(actions[0].type, 'close');
   assert.equal(actions[0].symbol, 'BTC');
 });
 
@@ -92,7 +92,7 @@ test('stop-loss exit fires at -4% vs avgEntry', () => {
   });
   const { actions } = decide(ctx);
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].type, 'sell');
+  assert.equal(actions[0].type, 'close');
   assert.equal(actions[0].symbol, 'BTC');
 });
 

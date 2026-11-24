@@ -4,7 +4,26 @@
 // vs. missing export).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadStrategy } from './run.mjs';
+import { loadStrategy, valuationPrices } from './run.mjs';
+
+test('valuationPrices falls back to last-known prices, never $0', () => {
+  const fresh = { BTC: 60000 };
+  const cache = new Map([
+    ['BTC', { price: 60000, at: 1, source: 'coingecko' }],
+    ['ETH', { price: 3000, at: 1, source: 'coincap' }],
+  ]);
+  const out = valuationPrices(fresh, cache);
+  assert.equal(out.BTC, 60000);
+  // ETH had no fresh quote this cycle: last-known beats a $0 mark, which
+  // would understate equity and can false-trigger the daily kill-switch.
+  assert.equal(out.ETH, 3000);
+});
+
+test('valuationPrices prefers fresh over cached', () => {
+  const fresh = { BTC: 61000 };
+  const cache = new Map([['BTC', { price: 60000, at: 1, source: 'coingecko' }]]);
+  assert.equal(valuationPrices(fresh, cache).BTC, 61000);
+});
 
 test('loadStrategy returns ok:true for a valid strategy module', async () => {
   const res = await loadStrategy({ key: 'momentum', file: './strategies/momentum.mjs' });

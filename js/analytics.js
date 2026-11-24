@@ -51,9 +51,14 @@ export function equityCurve(trader, opts = {}) {
         p.qty -= qty;
         if (p.qty <= 1e-12) delete pos[t.symbol];
       } else {
-        cash += notional - fee; // short open
-        pos[t.symbol] = { qty: -(p ? Math.abs(p.qty) + qty : qty), avgEntry: px };
-        if (p && p.qty < 0) pos[t.symbol].avgEntry = p.avgEntry; // keep entry on adds
+        // open a short, or add to one: avgEntry is the qty-weighted average
+        // (kept in sync with replay() — a later cover depends on it)
+        cash += notional - fee;
+        const newQty = (p ? Math.abs(p.qty) : 0) + qty;
+        pos[t.symbol] = {
+          qty: -newQty,
+          avgEntry: p && p.qty < 0 ? (Math.abs(p.qty) * p.avgEntry + qty * px) / newQty : px,
+        };
       }
     }
     let value = cash;

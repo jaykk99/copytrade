@@ -120,6 +120,23 @@ console.log('leaderboard');
     assert.ok(!importTrader(s2, code).ok, 'duplicate rejected');
     assert.ok(!importTrader(s2, 'garbage').ok, 'garbage rejected');
   });
+
+  t('importTrader drops malformed positions instead of poisoning the books', () => {
+    const s2 = newState();
+    const code = JSON.stringify({ v: 1, trader: {
+      id: 'bad1', name: 'Bad', cash: 10000, realizedPnl: 0, createdAt: 1,
+      positions: {
+        BTC: { qty: 'abc', avgEntry: 60000 },
+        ETH: { qty: 1, avgEntry: 'x' },
+        XXX: { qty: 1, avgEntry: 1 },
+      },
+      trades: [],
+    } });
+    const r = importTrader(s2, code);
+    assert.ok(r.ok, r.error);
+    assert.deepEqual(s2.traders.bad1.positions, {});
+    assert.ok(Number.isFinite(portfolioValue(s2.traders.bad1, priceOf)));
+  });
 }
 
 console.log('copy trading');
@@ -151,6 +168,49 @@ console.log('copy trading');
     assert.ok(mirrored[0].result.ok, JSON.stringify(mirrored[0].result));
     assert.ok(!copier.positions.BTC, 'copier closed too');
     assert.ok(copier.realizedPnl > 0, 'copier profited');
+  });
+
+  t('mirror copies a leader short-open', () => {
+    const s2 = newState();
+    const l2 = createTrader(s2, 'L2');
+    const f2 = createTrader(s2, 'F2');
+    followTrader(s2, f2.id, l2.id, 0.5);
+    px.BTC = 60000;
+    const lr = placePaperTrade(s2, l2.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 60000, at: 100, equity: 10000 });
+    assert.ok(lr.ok);
+    const mirrored = mirrorTrade(s2, lr.trade, priceOf);
+    assert.ok(mirrored[0].result.ok, JSON.stringify(mirrored[0].result));
+    assert.ok(f2.positions.BTC.qty < 0, 'follower short too');
+    assert.ok(Math.abs(f2.positions.BTC.qty - (-0.05)) < 1e-9);
+  });
+
+  t('mirror cover does not buy a long follower more long', () => {
+    const s2 = newState();
+    const l2 = createTrader(s2, 'L2');
+    const f2 = createTrader(s2, 'F2');
+    followTrader(s2, f2.id, l2.id, 0.5);
+    placePaperTrade(s2, l2.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 60000, at: 100, equity: 10000 });
+    placePaperTrade(s2, f2.id, { symbol: 'BTC', side: 'buy', qty: 0.05, price: 60000, at: 100 });
+    const lr = placePaperTrade(s2, l2.id, { symbol: 'BTC', side: 'buy', qty: 0.1, price: 55000, at: 200 });
+    assert.ok(lr.ok && typeof lr.trade.realizedPnl === 'number');
+    const mirrored = mirrorTrade(s2, lr.trade, priceOf);
+    assert.ok(!mirrored[0].result.ok, 'cover of a short the follower never held must fail');
+    assert.ok(Math.abs(f2.positions.BTC.qty - 0.05) < 1e-9, 'follower long untouched');
+  });
+
+  t('mirror short-open crossing a long flips via two legs', () => {
+    const s2 = newState();
+    const l2 = createTrader(s2, 'L2');
+    const f2 = createTrader(s2, 'F2');
+    followTrader(s2, f2.id, l2.id, 1);
+    placePaperTrade(s2, f2.id, { symbol: 'BTC', side: 'buy', qty: 0.02, price: 60000, at: 100 });
+    px.BTC = 60000;
+    const lr = placePaperTrade(s2, l2.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 60000, at: 100, equity: 10000 });
+    assert.ok(lr.ok);
+    const mirrored = mirrorTrade(s2, lr.trade, priceOf);
+    assert.ok(mirrored[0].result.ok, JSON.stringify(mirrored[0].result));
+    assert.ok(Math.abs(f2.positions.BTC.qty - (-0.08)) < 1e-9, 'got ' + f2.positions.BTC.qty);
+    assert.equal(mirrored[0].result.trades.length, 2);
   });
 
   t('unfollow stops mirroring', () => {
@@ -191,6 +251,20 @@ console.log('prices');
     assert.equal(f.get('BTC').price, 61000);
   });
 
+  t('partial coingecko fills missing symbols from coincap', async () => {
+    const partial = async (url) => {
+      if (String(url).includes('coingecko')) {
+        return { ok: true, json: async () => ({ bitcoin: { usd: 60000 } }) };
+      }
+      return { ok: true, json: async () => ({ data: [{ symbol: 'ETH', priceUsd: '3000' }] }) };
+    };
+    const f = createPriceFeed(partial);
+    const r = await f.refresh();
+    assert.ok(r.ok);
+    assert.equal(f.get('BTC').price, 60000);
+    assert.equal(f.get('ETH').price, 3000);
+  });
+
   t('both down -> not ok, no invented prices', async () => {
     const f = createPriceFeed(async () => { throw new Error('down'); });
     const r = await f.refresh();
@@ -210,6 +284,10 @@ console.log('safety');
     assert.equal(detectChain('0x742d35Cc6634C0532925a3b844Bc454e4438f44e'), 'ethereum');
     assert.equal(detectChain('bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4'), 'bitcoin');
     assert.equal(detectChain('not an address'), null);
+    // Dogecoin (34 chars, D...) and XRP (r...) must not read as Solana
+    assert.equal(detectChain('DH5yaieqoZN36fDVgqD9oM8GpLJ8bVGeKx'), 'dogecoin');
+    assert.equal(detectChain('r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59'), 'ripple');
+    assert.equal(detectChain('DYw8jCTfwHNRJhhmFcbXvVDTqWMEVFBX6ZKUmG5CNSKK'), 'solana');
     assert.equal(shortAddress('0x742d35Cc6634C0532925a3b844Bc454e4438f44e'), '0x742d…f44e');
   });
 }
@@ -266,6 +344,27 @@ console.log('shorts');
     const pos = d.positions.BTC;
     assert.ok(pos.qty * (110 - pos.avgEntry) < 0); // price up -> loss
     assert.ok(pos.qty * (90 - pos.avgEntry) > 0);  // price down -> profit
+  });
+
+  t('adding to a short uses weighted avgEntry', () => {
+    const s2 = newState();
+    const b = createTrader(s2, 'AddShort');
+    placePaperTrade(s2, b.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 60000, at: 1, equity: 10000 });
+    const r = placePaperTrade(s2, b.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 50000, at: 2, equity: 10000 });
+    assert.ok(r.ok, r.error);
+    assert.ok(Math.abs(b.positions.BTC.qty - (-0.2)) < 1e-9);
+    assert.ok(Math.abs(b.positions.BTC.avgEntry - 55000) < 1e-9);
+    // cover books against the weighted entry: 0.2*(55000-55000) - fee(11) = -11
+    const c = placePaperTrade(s2, b.id, { symbol: 'BTC', side: 'buy', qty: 0.2, price: 55000, at: 3 });
+    assert.ok(Math.abs(c.trade.realizedPnl - (-11)) < 1e-9, 'got ' + c.trade.realizedPnl);
+  });
+
+  t('short add beyond total equity rejected', () => {
+    const s2 = newState();
+    const b = createTrader(s2, 'AddShort2');
+    placePaperTrade(s2, b.id, { symbol: 'BTC', side: 'sell', qty: 0.1, price: 60000, at: 1, equity: 10000 });
+    const r = placePaperTrade(s2, b.id, { symbol: 'BTC', side: 'sell', qty: 1, price: 60000, at: 2, equity: 10000 });
+    assert.equal(r.ok, false);
   });
 }
 
@@ -382,6 +481,18 @@ console.log('risk');
     assert.ok(g.violations.some(v => v.rule === 'loss-streak-cooldown'));
   });
 
+  t('breakeven close breaks the loss streak', () => {
+    const s2 = newState();
+    const b = createTrader(s2, 'Scratch');
+    b.trades = [
+      { id: 'x1', symbol: 'BTC', side: 'sell', qty: 0.01, price: 60000, at: 3, realizedPnl: -5 },
+      { id: 'x2', symbol: 'BTC', side: 'sell', qty: 0.01, price: 60000, at: 2, realizedPnl: 0 },
+      { id: 'x3', symbol: 'BTC', side: 'sell', qty: 0.01, price: 60000, at: 1, realizedPnl: -5 },
+    ];
+    const g = checkTrade(s2, b.id, { symbol: 'ETH', side: 'buy', qty: 0.1, price: 3000 }, priceOf);
+    assert.ok(g.ok, JSON.stringify(g.violations));
+  });
+
   t('riskStatus reports position sizing', () => {
     const s4 = newState();
     const p = createTrader(s4, 'Pos');
@@ -419,6 +530,17 @@ console.log('backtest');
     const bad = replay(trades.map(x => x.id === 't2' ? { ...x, realizedPnl: 9999 } : x));
     assert.ok(!bad.clean);
     assert.ok(bad.mismatches.some(m => m.issue === 'realizedPnl mismatch'));
+  });
+
+  t('replay uses weighted avgEntry when adding to a short', () => {
+    const trades = [
+      { id: 'a', symbol: 'BTC', side: 'sell', qty: 1, price: 60000, at: 1, fee: 60, realizedPnl: null },
+      { id: 'b', symbol: 'BTC', side: 'sell', qty: 1, price: 50000, at: 2, fee: 50, realizedPnl: null },
+      { id: 'c', symbol: 'BTC', side: 'buy', qty: 2, price: 55000, at: 3, fee: 110, realizedPnl: -110 },
+    ];
+    const r = replay(trades);
+    assert.ok(r.clean, JSON.stringify(r.mismatches));
+    assert.ok(Math.abs(r.recomputedRealized - (-110)) < 1e-6, 'got ' + r.recomputedRealized);
   });
 
   t('replay flags bad side/qty without crashing', () => {

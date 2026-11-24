@@ -112,7 +112,15 @@ export function placePaperTrade(state, traderId, opts) {
       pos.qty -= qty;
       if (pos.qty <= 1e-12) delete trader.positions[symbol];
     } else if (pos && pos.qty < -1e-12) {
-      return { ok: false, error: 'already short; buy to cover first' };
+      // add to an existing short: weighted avgEntry, no-leverage margin on
+      // the TOTAL short notional (a short add is an open, not a cover)
+      const newQty = -pos.qty + qty;
+      if (newQty * price > equity + 1e-9) {
+        return { ok: false, error: 'short exceeds paper equity (no leverage)' };
+      }
+      trader.cash += notional - fee;
+      pos.avgEntry = (-pos.qty * pos.avgEntry + qty * price) / newQty;
+      pos.qty = -newQty;
     } else {
       // open short (paper margin: no leverage)
       if (notional > equity + 1e-9) {
@@ -175,12 +183,24 @@ export function importTrader(state, json) {
   const t = parsed && parsed.trader;
   if (!t || !t.id || !Array.isArray(t.trades)) return { ok: false, error: 'bad share code' };
   if (state.traders[t.id]) return { ok: false, error: 'trader already imported' };
-  // sanitize: keep only known fields
+  // sanitize: keep only known fields, and validate positions — a crafted
+  // share code with a non-numeric qty/avgEntry would otherwise poison
+  // portfolioValue (NaN) and break the leaderboard for every trader.
+  const positions = {};
+  if (t.positions && typeof t.positions === 'object' && !Array.isArray(t.positions)) {
+    for (const [sym, p] of Object.entries(t.positions)) {
+      if (!CONFIG.SYMBOLS[sym] || !p || typeof p !== 'object') continue;
+      const qty = Number(p.qty);
+      const avgEntry = Number(p.avgEntry);
+      if (!Number.isFinite(qty) || !Number.isFinite(avgEntry) || avgEntry <= 0) continue;
+      positions[sym] = { qty, avgEntry };
+    }
+  }
   state.traders[t.id] = {
     id: String(t.id),
     name: String(t.name || 'Trader').slice(0, 24),
     cash: Number(t.cash) || 0,
-    positions: t.positions && typeof t.positions === 'object' ? t.positions : {},
+    positions,
     realizedPnl: Number(t.realizedPnl) || 0,
     trades: t.trades.filter(x => x && x.symbol && x.side && x.at).map(x => ({
       id: String(x.id), traderId: String(t.id), symbol: String(x.symbol),

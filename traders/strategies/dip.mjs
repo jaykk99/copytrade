@@ -42,7 +42,7 @@ export function decide(ctx) {
     if (!pos || !Number.isFinite(pos.avgEntry) || pos.avgEntry <= 0) continue;
     const ret = (price - pos.avgEntry) / pos.avgEntry;
     if (ret >= BOUNCE_PCT || ret <= -STOP_PCT) {
-      actions.push({ type: 'sell', symbol, fraction: 1 }); // sell = full position
+      actions.push({ type: 'close', symbol, fraction: 1 }); // close = full position
       delete positions[symbol]; // freed slot for a new entry this cycle
     }
   }

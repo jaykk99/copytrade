@@ -73,6 +73,20 @@ function lockOwnerAlive() {
   } catch { return false; }
 }
 
+// Valuation prices for equity / kill-switch / leaderboard: fresh quotes win,
+// but a held symbol whose fresh quote missed this cycle must NOT be valued
+// at $0 — fall back to its last known cached price. A $0 mark would
+// understate equity and can false-trigger the 20% daily kill-switch and
+// flatten the account on a partial feed outage. Trading decisions still use
+// fresh prices only (see cycle()).
+export function valuationPrices(fresh, cache) {
+  const out = { ...fresh };
+  for (const [sym, e] of cache.entries()) {
+    if (out[sym] == null && e && typeof e.price === 'number') out[sym] = e.price;
+  }
+  return out;
+}
+
 // Load one strategy module. Returns { ok: true, mod } or { ok: false, reason }.
 // The reason carries the real import error (missing file vs. syntax error vs.
 // missing export) so a silently-skipped strategy is diagnosable instead of
@@ -125,7 +139,11 @@ async function cycle() {
   const freshCount = Object.keys(prices).length;
   if (freshCount === 0) { log('no fresh prices — no trading'); return; }
 
-  const priceOf = sym => prices[sym] ?? null;
+  // Valuation (equity, kill-switch, leaderboard) uses last-known prices for
+  // symbols whose fresh quote missed this cycle — never $0. Trading below
+  // still gates on `prices` (fresh only).
+  const valuation = valuationPrices(prices, feed.cache);
+  const priceOf = sym => valuation[sym] ?? null;
   const day = todayStr();
   const newTrades = [];
 

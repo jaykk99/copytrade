@@ -17,9 +17,14 @@ export function detectChain(address) {
   const a = (address || '').trim();
   if (/^0x[0-9a-fA-F]{40}$/.test(a)) return 'ethereum'; // also BNB Chain EVM
   if (/^(bc1|[13])[a-zA-Z0-9]{25,62}$/.test(a)) return 'bitcoin';
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)) return 'solana';
-  if (/^D[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a)) return 'dogecoin';
+  // Dogecoin is exactly 34 chars starting with D, Ripple 25-35 starting
+  // with r — check both BEFORE Solana: Solana's 32-44 char base58 range
+  // would otherwise swallow every Doge address and most XRP addresses.
+  // (Residual ambiguity: a Solana address that is exactly 34 chars starting
+  // with D, or 32-35 chars starting with r, reads as Doge/Ripple.)
+  if (/^D[1-9A-HJ-NP-Za-km-z]{33}$/.test(a)) return 'dogecoin';
   if (/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(a)) return 'ripple';
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)) return 'solana';
   if (/^addr1[0-9a-z]{50,100}$/.test(a)) return 'cardano';
   return null;
 }

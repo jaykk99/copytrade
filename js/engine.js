@@ -175,20 +175,33 @@ export function importTrader(state, json) {
   const t = parsed && parsed.trader;
   if (!t || !t.id || !Array.isArray(t.trades)) return { ok: false, error: 'bad share code' };
   if (state.traders[t.id]) return { ok: false, error: 'trader already imported' };
-  // sanitize: keep only known fields
-  state.traders[t.id] = {
-    id: String(t.id),
-    name: String(t.name || 'Trader').slice(0, 24),
-    cash: Number(t.cash) || 0,
-    positions: t.positions && typeof t.positions === 'object' ? t.positions : {},
-    realizedPnl: Number(t.realizedPnl) || 0,
-    trades: t.trades.filter(x => x && x.symbol && x.side && x.at).map(x => ({
-      id: String(x.id), traderId: String(t.id), symbol: String(x.symbol),
-      side: x.side, qty: Number(x.qty), price: Number(x.price),
-      notional: Number(x.notional), fee: Number(x.fee), at: Number(x.at),
-      realizedPnl: typeof x.realizedPnl === 'number' ? x.realizedPnl : null,
-    })),
-    createdAt: Number(t.createdAt) || Date.now(),
-  };
-  return { ok: true, trader: state.traders[t.id] };
+  // Trust NOTHING but the recorded trades: cash, positions and realized P&L
+  // in the payload are discarded and rebuilt by replaying the trade list
+  // through the engine. A share code claiming $1M cash or a huge position
+  // with no trades behind it must never reach the leaderboard.
+  const trades = [...t.trades].sort((a, b) => Number(a.at) - Number(b.at));
+  const temp = newState();
+  const rebuilt = createTrader(temp, String(t.name || 'Trader').slice(0, 24));
+  const lastPx = {};
+  for (const x of trades) {
+    if (!x || typeof x.symbol !== 'string' || (x.side !== 'buy' && x.side !== 'sell')) {
+      return { ok: false, error: 'bad share code: invalid trade in list' };
+    }
+    const qty = Number(x.qty), price = Number(x.price), at = Number(x.at);
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price <= 0 || !Number.isFinite(at)) {
+      return { ok: false, error: 'bad share code: invalid trade in list' };
+    }
+    lastPx[x.symbol.toUpperCase()] = price;
+    const r = placePaperTrade(temp, rebuilt.id, {
+      symbol: x.symbol, side: x.side, qty, price, at,
+      equity: portfolioValue(rebuilt, sym => lastPx[sym] ?? null),
+    });
+    if (!r.ok) return { ok: false, error: 'bad share code: trade the engine rejects (' + r.error + ')' };
+  }
+  // keep the shared id/name/createdAt, take everything else from the replay
+  rebuilt.id = String(t.id);
+  for (const tr of rebuilt.trades) tr.traderId = rebuilt.id;
+  rebuilt.createdAt = Number(t.createdAt) || Date.now();
+  state.traders[rebuilt.id] = rebuilt;
+  return { ok: true, trader: rebuilt };
 }

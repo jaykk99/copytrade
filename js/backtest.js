@@ -35,6 +35,10 @@ export function replay(trades, opts = {}) {
     const p = pos[t.symbol];
     if (t.side === 'buy') {
       if (p && p.qty < 0) {
+        if (qty > -p.qty + 1e-12) {
+          mismatches.push({ tradeId: t.id, issue: 'cover qty exceeds short', trade: t });
+          continue;
+        }
         realized = qty * (p.avgEntry - px) - fee;
         cash -= notional + fee;
         p.qty += qty;
@@ -49,13 +53,21 @@ export function replay(trades, opts = {}) {
       }
     } else if (t.side === 'sell') {
       if (p && p.qty > 0) {
+        if (qty > p.qty + 1e-12) {
+          mismatches.push({ tradeId: t.id, issue: 'sell qty exceeds position', trade: t });
+          continue;
+        }
         realized = qty * (px - p.avgEntry) - fee;
         cash += notional - fee;
         p.qty -= qty;
         if (p.qty <= 1e-12) delete pos[t.symbol];
+      } else if (p && p.qty < 0) {
+        // the engine never adds to a short; a log that does is not clean
+        mismatches.push({ tradeId: t.id, issue: 'cannot add to short', trade: t });
+        continue;
       } else {
         cash += notional - fee;
-        pos[t.symbol] = { qty: -(p ? Math.abs(p.qty) + qty : qty), avgEntry: px };
+        pos[t.symbol] = { qty: -qty, avgEntry: px };
       }
     } else {
       mismatches.push({ tradeId: t.id, issue: 'bad side', trade: t });

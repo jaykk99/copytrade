@@ -60,6 +60,17 @@ export function createPriceFeed(fetchImpl) {
       if (!prices || Object.keys(prices).length === 0) {
         try { prices = await fromCoinCap(); source = 'coincap'; }
         catch { /* fall through */ }
+      } else if (Object.keys(prices).length < Object.keys(CONFIG.SYMBOLS).length) {
+        // partial primary: fill the missing symbols from the fallback
+        // instead of leaving them stale when CoinCap has them
+        try {
+          const fallback = await fromCoinCap();
+          let filled = 0;
+          for (const [sym, p] of Object.entries(fallback)) {
+            if (!(sym in prices)) { prices[sym] = p; filled++; }
+          }
+          if (filled > 0) source = 'coingecko+coincap';
+        } catch { /* keep the partial primary */ }
       }
       const now = Date.now();
       if (prices) {

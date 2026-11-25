@@ -120,6 +120,56 @@ console.log('leaderboard');
     assert.ok(!importTrader(s2, code).ok, 'duplicate rejected');
     assert.ok(!importTrader(s2, 'garbage').ok, 'garbage rejected');
   });
+
+  t('import discards fabricated cash/positions, keeps only real trades', () => {
+    const fake = JSON.stringify({ v: 1, trader: {
+      id: 'fake1', name: 'Faker', cash: 1000000,
+      positions: { BTC: { qty: 10, avgEntry: 1 } },
+      realizedPnl: 990000, trades: [], createdAt: 1000,
+    } });
+    const s2 = newState();
+    const r = importTrader(s2, fake);
+    assert.ok(r.ok, r.error); // empty trade list imports as a fresh $10k trader
+    assert.equal(s2.traders.fake1.cash, 10000);
+    assert.deepEqual(s2.traders.fake1.positions, {});
+    assert.equal(s2.traders.fake1.realizedPnl, 0);
+    const lb = leaderboard(s2, priceOf);
+    assert.equal(lb[0].totalPnl, 0);
+  });
+
+  t('import rejects a trade list the engine rejects', () => {
+    const bad = JSON.stringify({ v: 1, trader: {
+      id: 'bad1', name: 'Bad', cash: 10000, positions: {}, realizedPnl: 0,
+      trades: [
+        { id: 't1', symbol: 'BTC', side: 'buy', qty: 0.1, price: 60000, at: 100, realizedPnl: null },
+        { id: 't2', symbol: 'BTC', side: 'sell', qty: 0.2, price: 66000, at: 200, realizedPnl: 1186.8 },
+      ],
+      createdAt: 1000,
+    } });
+    const s2 = newState();
+    const r = importTrader(s2, bad);
+    assert.ok(!r.ok, 'over-sell in share code must be rejected');
+    assert.ok(!s2.traders.bad1, 'rejected import leaves no trader behind');
+  });
+
+  t('imported corrupt positions cannot poison later trades', () => {
+    const code = JSON.stringify({ v: 1, trader: {
+      id: 'c1', name: 'Corrupt', cash: 10000,
+      positions: { BTC: { qty: '0.1', avgEntry: 'not-a-number' } },
+      realizedPnl: 0,
+      trades: [{ id: 't0', symbol: 'BTC', side: 'buy', qty: 0.1, price: 60000, notional: 6000, fee: 6, at: 1000, realizedPnl: null }],
+      createdAt: 1000,
+    } });
+    const s2 = newState();
+    const r = importTrader(s2, code);
+    assert.ok(r.ok, r.error);
+    assert.equal(typeof s2.traders.c1.positions.BTC.qty, 'number');
+    px.BTC = 66000;
+    const sell = placePaperTrade(s2, 'c1', { symbol: 'BTC', side: 'sell', qty: 0.1, price: 66000, at: 2000 });
+    assert.ok(sell.ok, sell.error);
+    assert.ok(Number.isFinite(sell.trade.realizedPnl), 'got ' + sell.trade.realizedPnl);
+    px.BTC = 60000;
+  });
 }
 
 console.log('copy trading');
@@ -189,6 +239,20 @@ console.log('prices');
     const r = await f.refresh();
     assert.ok(r.ok && r.source === 'coincap');
     assert.equal(f.get('BTC').price, 61000);
+  });
+
+  t('partial coingecko fills gaps from coincap', async () => {
+    const partial = async (url) => {
+      if (url.includes('coingecko')) return { ok: true, json: async () => ({ bitcoin: { usd: 60000 } }) };
+      return { ok: true, json: async () => ({ data: [{ symbol: 'ETH', priceUsd: '3000' }, { symbol: 'BTC', priceUsd: '61000' }] }) };
+    };
+    const f = createPriceFeed(partial);
+    const r = await f.refresh();
+    assert.ok(r.ok);
+    assert.equal(r.source, 'coingecko+coincap');
+    assert.equal(f.get('BTC').price, 60000); // primary wins where it answered
+    assert.equal(f.get('ETH').price, 3000); // gap filled from fallback
+    assert.ok(f.hasFresh('ETH'));
   });
 
   t('both down -> not ok, no invented prices', async () => {
@@ -282,6 +346,7 @@ console.log('analytics');
   t('tradeStats: win rate, expectancy, profit factor', () => {
     const st = tradeStats(a);
     assert.equal(st.closed, 2);
+    assert.equal(st.open, 0); // flat: bought then sold everything
     assert.equal(st.winRate, 0.5);
     // win 59.34, loss -602.4
     assert.ok(Math.abs(st.expectancy - (59.34 - 602.4) / 2) < 1e-6, 'got ' + st.expectancy);
@@ -289,6 +354,16 @@ console.log('analytics');
     assert.equal(st.maxWinStreak, 1);
     assert.equal(st.maxLossStreak, 1);
     assert.ok(st.totalFees > 0);
+  });
+
+  t('tradeStats.open counts positions held, not opening trades', () => {
+    const s2 = newState();
+    const h = createTrader(s2, 'Holder');
+    placePaperTrade(s2, h.id, { symbol: 'BTC', side: 'buy', qty: 0.01, price: 60000, at: 1000 });
+    placePaperTrade(s2, h.id, { symbol: 'ETH', side: 'buy', qty: 0.1, price: 3000, at: 2000 });
+    assert.equal(tradeStats(h).open, 2);
+    placePaperTrade(s2, h.id, { symbol: 'ETH', side: 'sell', qty: 0.1, price: 3000, at: 3000 });
+    assert.equal(tradeStats(h).open, 1);
   });
 
   t('equityCurve starts at 10000, ends flat with no positions', () => {
@@ -424,6 +499,29 @@ console.log('backtest');
   t('replay flags bad side/qty without crashing', () => {
     const r = replay([{ id: 'x', symbol: 'BTC', side: 'hold', qty: 1, price: 1, at: 1 }]);
     assert.ok(r.mismatches.some(m => m.issue === 'bad side'));
+  });
+
+  t('replay flags over-sell, over-cover and short-add', () => {
+    const overSell = replay([
+      { id: 't1', symbol: 'BTC', side: 'buy', qty: 0.1, price: 60000, at: 100, fee: 6, realizedPnl: null },
+      { id: 't2', symbol: 'BTC', side: 'sell', qty: 0.2, price: 66000, at: 200, fee: 13.2, realizedPnl: 1186.8 },
+    ]);
+    assert.ok(!overSell.clean);
+    assert.ok(overSell.mismatches.some(m => m.issue === 'sell qty exceeds position'));
+    const overCover = replay([
+      { id: 't1', symbol: 'BTC', side: 'sell', qty: 0.1, price: 60000, at: 100, fee: 6, realizedPnl: null },
+      { id: 't2', symbol: 'BTC', side: 'buy', qty: 0.2, price: 60000, at: 200, fee: 12, realizedPnl: -12 },
+    ]);
+    assert.ok(!overCover.clean);
+    assert.ok(overCover.mismatches.some(m => m.issue === 'cover qty exceeds short'));
+    const shortAdd = replay([
+      { id: 't1', symbol: 'BTC', side: 'sell', qty: 0.1, price: 60000, at: 100, fee: 6, realizedPnl: null },
+      { id: 't2', symbol: 'BTC', side: 'sell', qty: 0.1, price: 66000, at: 200, fee: 6.6, realizedPnl: null },
+    ]);
+    assert.ok(!shortAdd.clean);
+    assert.ok(shortAdd.mismatches.some(m => m.issue === 'cannot add to short'));
+    assert.equal(shortAdd.finalPositions.BTC.qty, -0.1); // bogus add skipped, entry kept
+    assert.equal(shortAdd.finalPositions.BTC.avgEntry, 60000);
   });
 
   t('runStrategy turns signals into a clean paper run', () => {

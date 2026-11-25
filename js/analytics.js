@@ -144,10 +144,14 @@ export function tradeStats(trader) {
     else { streak = streak <= 0 ? streak - 1 : -1; bestL = Math.max(bestL, -streak); }
   }
   const fees = trader.trades.reduce((a, t) => a + (Number(t.fee) || 0), 0);
+  // open = positions actually held right now, not the count of opening trades
+  // (a trader who bought then sold everything flat holds 0 open positions)
+  const open = Object.keys(trader.positions || {})
+    .filter(s => Math.abs(Number(trader.positions[s]?.qty) || 0) > 1e-12).length;
   return {
     trades: trader.trades.length,
     closed: closed.length,
-    open: trader.trades.length - closed.length,
+    open,
     winRate: closed.length ? wins.length / closed.length : null,
     profitFactor: grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : null),
     avgWin: wins.length ? grossWin / wins.length : null,
